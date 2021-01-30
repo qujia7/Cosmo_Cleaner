@@ -1,0 +1,8 @@
+README.md
+setup.py
+cosmo_cleaner/__init__.py
+cosmo_cleaner.egg-info/PKG-INFO
+cosmo_cleaner.egg-info/SOURCES.txt
+cosmo_cleaner.egg-info/dependency_links.txt
+cosmo_cleaner.egg-info/not-zip-safe
+cosmo_cleaner.egg-info/top_level.txt
