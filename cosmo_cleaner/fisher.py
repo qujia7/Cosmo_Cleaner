@@ -102,7 +102,55 @@ class Forecaster():
         fisher_integrated = np.sum(fisher_per_mode, axis = 0) 
         print(fisher_integrated)
         self.fisher = fisher_integrated 
+        print(self.fisher)
         self.error_non_marginalized = np.nan_to_num(np.diag(self.fisher)**-0.5 )
         self.error_marginalized = np.nan_to_num(np.linalg.inv(self.fisher)**0.5 )
         return self.error_marginalized
 
+
+    
+def compare_cleaning(clgg,clcibcib,clkk,clkg,clcibk,clcibg,bias,cut=500,fsky=1,num_spectra=2):
+    clgg0=clgg/4
+    clgk0=clkg/2
+    ellrange=np.arange(cut)
+    
+    #calculate the base error
+    spectra = {'kg': clkg[:cut], 'gg' :clgg[:cut], 'kk': clkk[:cut]}
+    spectra_used = ['kg', 'gg']
+    pars = ['b']#, 's'
+    Npars = len(pars)
+    der_spectra_alpha = np.ones((len(clkg[:cut]), num_spectra, Npars))
+    #Derivatives with respect to b
+    der_spectra_alpha[:, 0, 0] = clgk0[:cut]
+    der_spectra_alpha[:, 1, 0] = 2*bias*clgg0[:cut]
+    
+    F_kg_gg_only = Forecaster(fsky, ellrange, ['k', 'g'], spectra, use_as_data =spectra_used)
+
+    F_kg_gg_only.prepare_cov_for_error()
+    err_kg_gg_only = F_kg_gg_only.make_fisher_and_err_bars(pars, der_spectra_alpha) 
+    print(f'Base error is {err_kg_gg_only}')   
+    
+    #incorporate cib
+    ## Now combine convergence and CIB
+    spectra_cross = {'k': clkg[:cut], 'i': clcibg[:cut]}
+    spectra_auto = {'kk': clkk[:cut], 'ii': clcibcib[:cut], 'ki': clcibk[:cut]}
+    C = Combiner(ellrange, spectra_cross, spectra_auto)
+    a = np.ones((len(ellrange), 2)) 
+    all_x=-clcibk[:cut]/clcibcib[:cut]
+    a = np.ones((len(ellrange), 2)) 
+    a[:, 1] = all_x
+    cross, auto = C.combine(a = a)
+    cross = clkg #do not change clkg, as ideally this should not be affected by cleaning, in this case they are the same
+    spectra = {'kg': cross[:cut], 'gg' :clgg[:cut], 'kk': auto[:cut]}
+    pars = ['b']#, 's']
+    Npars = len(pars)
+    der_spectra_alpha = np.ones((len(clkg[:cut]), 3, Npars))
+    #Derivatives with respect to b
+    der_spectra_alpha[:, 0, 0] = cross[:cut]/bias
+    der_spectra_alpha[:, 1, 0] = 2*bias*clgg0[:cut]
+    der_spectra_alpha[:, 2, 0] = clkk[:cut]*np.zeros(len(clkk[:cut]))
+    F=Forecaster(fsky,ellrange,['k','g'],spectra)
+    F.prepare_cov_for_error()
+    result=F.make_fisher_and_err_bars(pars,der_spectra_alpha)
+    print(f'{100*(err_kg_gg_only[0][0]-result[0][0])/err_kg_gg_only[0][0]} % improvement with cleaning')
+    return (err_kg_gg_only[0][0],result[0][0])
