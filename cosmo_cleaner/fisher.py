@@ -107,7 +107,82 @@ class Forecaster():
         self.error_marginalized = np.nan_to_num(np.linalg.inv(self.fisher)**0.5 )
         return self.error_marginalized
 
+#create forecaster class as a check of the above
 
+#receive spectra as a dict
+
+class Fisher():
+    def __init__(self, fsky,Npars, ells, spectra, der_spectra):
+        self.spectra=spectra
+        self.fsky=fsky
+        self.der_spectra=der_spectra
+        self.Npars=Npars
+        self.ells=ells
+        #function to get the number of modes
+        
+    def get_modes(self):
+        
+        deltaL=np.zeros(len(self.ells))
+        deltaL[0]=self.ells[0]-0
+        deltaL[1:]=self.ells[1:]-self.ells[:-1] 
+        result = (2*self.ells*deltaL*self.fsky)
+        return 1/result
+
+    def get_Cl(self,X,Y):
+        """X:g,k,i
+           Y:g,k,i
+        """
+        if X+Y in self.spectra:
+            Cl=self.spectra[X+Y]
+        elif Y+X in self.spectra:
+            Cl=self.spectra[Y+X]
+        else:
+            #field not present assume its zero and do not return error
+            Cl=np.zeros(len(self.ells))
+        return Cl
+
+    def get_cov(self,X,Y,W,Z):
+        return self.get_modes()*(self.get_Cl(X,W)*self.get_Cl(Y,Z)+self.get_Cl(X,Z)*self.get_Cl(Y,W))
+
+    def get_covmat(self):
+        self.covmat=np.zeros((len(self.ells),len(self.spectra),len(self.spectra)))
+        self.cov_dict = {}
+        for i in range(len(self.spectra)): 
+            for j in range(len(self.spectra)):
+                X,Y=list(spectra)[i]
+                W,Z=list(spectra)[j]
+                self.covmat[:,i,j]=self.get_cov(X,Y,W,Z)
+                self.cov_dict[list(spectra)[i]+','+list(spectra)[j]]= self.get_cov(X,Y,W,Z)
+        return self.covmat
+    
+    def get_fisher(self):
+        
+        #derivatives check shape (ells,len(spectra),len(pars))
+        assert(self.der_spectra.shape[0] == len(self.ells)) 
+        assert(self.der_spectra.shape[1] == len(self.spectra)) 
+        assert(self.der_spectra.shape[2] == self.Npars)
+        fisher_per_mode = np.einsum('...ik, ...ij, ...jm -> ...km',self.der_spectra, np.nan_to_num(np.linalg.inv(self.get_covmat())), self.der_spectra)
+        self.fisher_per_mode=fisher_per_mode
+        self.error_per_mode_non_marginalized = np.nan_to_num(np.diagonal(fisher_per_mode,axis1 = 1, axis2 = 2)**-0.5)
+        
+        self.fisher=np.sum(self.fisher_per_mode,axis=0)
+        self.error_non_marginalized = np.diag(self.fisher)**-0.5 
+        self.error_marginalized = np.linalg.inv(self.fisher)**0.5
+        
+        return self.error_marginalized[0]
+    
+#example use case
+"""
+spectra = {'kg': clkg[:cut], 'gg' :clgg[:cut], 'kk': clkk[:cut]}
+der_spectra_alpha = np.ones((len(clkg[:cut]), len(spectra), Npars))
+#Derivatives with respect to b
+der_spectra_alpha[:, 0, 0] = clgk0[:cut]
+der_spectra_alpha[:, 1, 0] = 2*bias*clgg0[:cut]
+der_spectra_alpha[:, 2, 0] = np.zeros(cut)
+
+a=Fisher(1,1,ellrange,spectra,der_spectra_alpha)
+a.get_fisher()
+"""
     
 def compare_cleaning(clgg,clcibcib,clkk,clkg,clcibk,clcibg,bias,cut=500,fsky=1,num_spectra=2):
     clgg0=clgg/4
