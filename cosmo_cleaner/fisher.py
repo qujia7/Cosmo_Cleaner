@@ -149,8 +149,8 @@ class Fisher():
         self.cov_dict = {}
         for i in range(len(self.spectra)): 
             for j in range(len(self.spectra)):
-                X,Y=list(spectra)[i]
-                W,Z=list(spectra)[j]
+                X,Y=list(self.spectra)[i]
+                W,Z=list(self.spectra)[j]
                 self.covmat[:,i,j]=self.get_cov(X,Y,W,Z)
                 self.cov_dict[list(spectra)[i]+','+list(spectra)[j]]= self.get_cov(X,Y,W,Z)
         return self.covmat
@@ -229,3 +229,15 @@ def compare_cleaning(clgg,clcibcib,clkk,clkg,clcibk,clcibg,bias,cut=500,fsky=1,n
     result=F.make_fisher_and_err_bars(pars,der_spectra_alpha)
     print(f'{100*(err_kg_gg_only[0][0]-result[0][0])/err_kg_gg_only[0][0]} % improvement with cleaning')
     return (err_kg_gg_only[0][0],result[0][0])
+
+
+
+def get_corrcoef(clgg,clcibcib,clkk,clkg,clcibk,clcibg):
+    rho={}
+    rho_gk=np.sqrt(clkg**2/(clgg*clkk))
+    rho_gcib=np.sqrt(clcibg**2/(clcibcib*clgg))
+    rho_kcib=np.sqrt(clcibk**2/(clcibcib*clkk))
+    rho['gk']=rho_gk
+    rho['gcib']=rho_gcib
+    rho['kcib']=rho_kcib
+    return rho
