@@ -69,9 +69,10 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
         lensingwindow = 1.5*(self.cosmology['omch2']+self.cosmology['ombh2']+self.pars.omnuh2)*100.*100.*(1.+self.zs)*self.chis*((self.chistar - self.chis)/self.chistar)/self.Hzs/cSpeedKmPerSec
         return self.Alens*lensingwindow
 
-    def get_clgg(self,mean_z,width,lmax=2000):
+    def get_clgg(self,galaxy_window,lmax=2000):
         cSpeedKmPerSec = 299792.458
-        galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
+        #galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
+        galaxywindow=galaxy_window
         cl_autog=[]
         ellsgg=np.arange(lmax)
         wg = np.ones(self.chis.shape)
@@ -107,10 +108,10 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
             clkk.append(estCl)
         return np.array(clkk)
 
-    def get_clkg(self,mean_z,width,lmax=2000):
+    def get_clkg(self,galaxy_window,lmax=2000):
         cSpeedKmPerSec = 299792.458
         lensingwindow=self.get_lensing_window()
-        galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
+        galaxywindow=galaxy_window
         precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
         ellsgg=np.arange(lmax)
         cl_cross=[]
@@ -131,6 +132,29 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
         'clkk':self.get_clkk(),'clkg':self.get_clkg(mean_z,width) }
         self.spectra=[self.get_clgg(mean_z,width),self.get_clkg(mean_z,width),self.get_clkk()]
         return np.array(self.spectra)
+    
+    #for this problem we need three fields, g1, cmb and the external tracer
+    def get_fields(self):
+        """
+        g1=self.bias*self.get_lensing_window()
+        g1[self.zs>0.3]=0
+        g2=self.get_lensing_window()
+        g3=self.get_lensing_window()
+        g3[self.zs<0.3]=0
+        """
+        
+        g1=self.dndz_gauss(self.zs,0.2,0.5)
+        g1[self.zs>0.3]=0
+        g2=self.get_lensing_window()
+        g3=self.dndz_gauss(self.zs,4,1)
+        g3[self.zs<0.3]=0
+        
+
+        self.windows=[g1,g2,g3]
+        self.fields=[self.get_clgg(g1),self.get_clkg(g1),self.get_clkk(),self.get_clgg(g3),self.get_clkg(g3),self.get_clkk()-(self.get_clkg(g3)**2/self.get_clgg(g3))]
+        return np.array(self.fields)
+
+
 
 
 
@@ -142,7 +166,8 @@ def derivative_parameter(ells,mean_z,width,defaultCosmology,parameter,delta=0.00
     high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
 
-    derivative=(high.get_spectra(mean_z,width)-low.get_spectra(mean_z,width))/(2*delta*defaultCosmology[parameter])
+    #derivative=(high.get_spectra(mean_z,width)-low.get_spectra(mean_z,width))/(2*delta*defaultCosmology[parameter])
+    derivative=(high.get_fields()-low.get_fields())/(2*delta*defaultCosmology[parameter])
     return derivative
         
 

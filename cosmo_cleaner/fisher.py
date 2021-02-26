@@ -152,7 +152,7 @@ class Fisher():
                 X,Y=list(self.spectra)[i]
                 W,Z=list(self.spectra)[j]
                 self.covmat[:,i,j]=self.get_cov(X,Y,W,Z)
-                self.cov_dict[list(spectra)[i]+','+list(spectra)[j]]= self.get_cov(X,Y,W,Z)
+                self.cov_dict[list(self.spectra)[i]+','+list(self.spectra)[j]]= self.get_cov(X,Y,W,Z)
         return self.covmat
     
     def get_fisher(self):
