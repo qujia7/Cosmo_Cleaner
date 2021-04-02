@@ -4,17 +4,18 @@ import itertools
 
 #finite difference
 #insert the parameter you would like to vary
-def get_cosmology_var(defaultCosmology,par,delta=0.005):
+def get_cosmology_var(defaultCosmology,par,delta):
     """
     default cosmology: dict containing default cosmology values
     par: parameter you are finding derivative of, keeping others constant
     delta: value you change your default cosmological parameter by
     """
+    left,right=delta
     defaultCosmology_h=defaultCosmology.copy()
     defaultCosmology_l=defaultCosmology.copy()
-    delta=delta*defaultCosmology[par]
-    defaultCosmology_h[par]+=delta
-    defaultCosmology_l[par]-=delta
+    #delta=delta*defaultCosmology[par]
+    defaultCosmology_h[par]+=right
+    defaultCosmology_l[par]-=left
     Cosmology_l=[defaultCosmology_h,defaultCosmology_l]
     parameters=[]
     cambres=[]
@@ -61,6 +62,7 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
         #LSST specification
 
         self.LSST_bins=np.array([0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.3, 2.6, 3, 3.5, 4, 7])
+        self.lsst_bias=np.array([cosmology[f'lsst_bias{i}'] for i in range(len(self.LSST_bins)-1)])
         start=self.LSST_bins[:-1]
         end= self.LSST_bins[1:] 
         self.LSST_z=[]
@@ -69,10 +71,23 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
 
         
 
-    def get_lensing_window(self):
+    def get_lensing_window(self,zmin=0):
         cSpeedKmPerSec = 299792.458
         lensingwindow = 1.5*(self.cosmology['omch2']+self.cosmology['ombh2']+self.pars.omnuh2)*100.*100.*(1.+self.zs)*self.chis*((self.chistar - self.chis)/self.chistar)/self.Hzs/cSpeedKmPerSec
+        lensingwindow[self.zs<zmin]=0.
         return self.Alens*lensingwindow
+        
+    def cib_window(self,nu,b=3.6e-62):
+        z_c=2
+        sigma_z=2
+        beta=2
+        nu=nu*10**9
+        T=34
+        k=1.38064852e-23
+        h=6.62607015e-34
+        f_nu=lambda x: ((np.exp(h*x/(k*T))-1)**(-1))*x**(beta+3)
+        eta_0=1.5e18
+        return b*(self.chis**2/(1.+self.zs)**2)*np.exp(-(self.zs-z_c)**2/(2*sigma_z**2))*f_nu(nu*(1+self.zs))
 
     def dn_dz_LSST(self,z,z0=0.3):
         return (1/(2*z0))*(z/z0)**2*np.exp(-z/z0)
@@ -82,11 +97,11 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
         window=bias*dndz/np.trapz(dndz,zrange)
         return np.interp(self.zs,zrange,window,right=0,left=0)
 
-    def get_lsst_kappa(self,i,lmax=2000):
+    def get_lsst_kappa(self,i,lmax=2000,zmin=0):
         #return lsstxlensing with the ith bin
         cSpeedKmPerSec = 299792.458
-        lensingwindow=self.get_lensing_window()
-        galaxywindow=self.lsst_window(self.LSST_z[i],self.dn_dz_LSST(self.LSST_z[i]))
+        lensingwindow=self.get_lensing_window(zmin=zmin)
+        galaxywindow=self.lsst_window(self.LSST_z[i],self.dn_dz_LSST(self.LSST_z[i]),self.lsst_bias[i])
 
         precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
         lbmax=self.kmax*self.results.comoving_radial_distance(np.mean(self.LSST_z[i]))
@@ -94,17 +109,17 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
         cl_cross=[]
         w = np.ones(self.chis.shape)
         for l in ellsgg:
-            if l<lbmax:
-                k=(l+0.5)/self.chis
-                w[:]=1
-                w[k<1e-4]=0
-                w[k>=self.kmax]=0
-                pkin = self.PK.P(self.zs, k, grid=False)
-                common = ((w*pkin)*precalcFactor)[self.zs>=self.zmin]        
-                estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(lensingwindow*galaxywindow)[self.zs>=self.zmin])
-                cl_cross.append(estCl)
-            else:
-                cl_cross.append(0)
+            i#f l<=lbmax:
+            k=(l+0.5)/self.chis
+            w[:]=1
+            w[k<1e-4]=0
+            w[k>=self.kmax]=0
+            pkin = self.PK.P(self.zs, k, grid=False)
+            common = ((w*pkin)*precalcFactor)[self.zs>=self.zmin]        
+            estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(lensingwindow*galaxywindow)[self.zs>=self.zmin])
+            cl_cross.append(estCl)
+            #else:
+                #cl_cross.append(0)
         return np.array(cl_cross)
 
     def get_lsst_auto(self,i,j=None,lmax=2000):
@@ -112,7 +127,7 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
         #int j:jth bin
         cSpeedKmPerSec = 299792.458
         #galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
-        galaxywindow=self.lsst_window(self.LSST_z[i],self.dn_dz_LSST(self.LSST_z[i]))
+        galaxywindow=self.lsst_window(self.LSST_z[i],self.dn_dz_LSST(self.LSST_z[i]),self.lsst_bias[i])
         if j is not None:
             galaxywindow2=self.lsst_window(self.LSST_z[j],self.dn_dz_LSST(self.LSST_z[j]))
         else:
@@ -126,25 +141,64 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
 
         precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
         for l in ellsgg:
-            if l<lbmax:
-                k=(l+0.5)/self.chis
-                wg[:]=1
-                wg[k<1e-4]=0
-                wg[k>=self.kmax]=0
-                pkin = self.PK.P(self.zs, k, grid=False)
-                common = ((wg*pkin)*precalcFactor)[self.zs>=self.zmin]        
-                estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(galaxywindow*galaxywindow2)[self.zs>=self.zmin])
-                cl_autog.append(estCl)
-            else:
-                cl_autog.append(0.)
+            #if l<=lbmax:
+            k=(l+0.5)/self.chis
+            wg[:]=1
+            wg[k<1e-4]=0
+            wg[k>=self.kmax]=0 
+            pkin = self.PK.P(self.zs, k, grid=False)
+            common = ((wg*pkin)*precalcFactor)[self.zs>=self.zmin]        
+            estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(galaxywindow*galaxywindow2)[self.zs>=self.zmin])
+            cl_autog.append(estCl)
+            #else:
+                #cl_autog.append(0.)
         return np.array(cl_autog)
 
     def dndz_gauss(self,z,z0,sigma):
         ans = 1/np.sqrt(2*np.pi*sigma**2)* np.exp((-(z-z0)**2)/ (2.*sigma**2.))
         return self.bias*self.Alens*ans 
 
+    def get_clcib(self,cib_window,lmax=3000):
+        cSpeedKmPerSec = 299792.458
 
-    def get_clgg(self,galaxy_window,lmax=2000):
+        cl_cib=[]
+        cib_window=cib_window
+        ells=np.arange(lmax)
+        w = np.ones(self.chis.shape)
+        precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
+
+        for l in ells:
+            k=(l)/self.chis
+            w[:]=1
+            w[k<1e-4]=0
+            w[k>=self.kmax]=0
+            pkin = self.PK.P(self.zs, k, grid=False)
+            common = ((w*pkin)*precalcFactor)[self.zs>=self.zmin]        
+            estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(cib_window*cib_window)[self.zs>=self.zmin])
+            cl_cib.append(estCl) 
+        return np.array(cl_cib)
+
+    def get_clcibg(self,galaxywindow,cib_window,lmax=3000):
+        cSpeedKmPerSec = 299792.458
+
+        galaxywindow=galaxywindow
+        cl_cibg=[]
+        ells=np.arange(2000)
+        wcg = np.ones(self.chis.shape)
+        precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
+
+        for l in ells:
+            k=(l)/self.chis
+            wcg[:]=1
+            wcg[k<1e-4]=0
+            wcg[k>=self.kmax]=0
+            pkin = self.PK.P(self.zs, k, grid=False)
+            common = ((wcg*pkin)*precalcFactor)[self.zs>=self.zmin]        
+            estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(cib_window*galaxywindow)[self.zs>=self.zmin])
+            cl_cibg.append(estCl) 
+        return np.array(cl_cibg)
+
+    def get_clgg(self,galaxy_window,lmax=3000):
         cSpeedKmPerSec = 299792.458
         #galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
         galaxywindow=galaxy_window
@@ -164,19 +218,19 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
             cl_autog.append(estCl)
         return np.array(cl_autog)
     
-    def get_clkk(self,lmax=2000):
+    def get_clkk(self,lmax=2000,lens_kmax=1000,zmin=0):
         cSpeedKmPerSec = 299792.458
         ells=np.arange(lmax)
         wk = np.ones(self.chis.shape)
         precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
-        lensingwindow=self.get_lensing_window()
+        lensingwindow=self.get_lensing_window(zmin=zmin)
 
         clkk=[]
         for l in ells:
             k=(l+0.5)/self.chis
             wk[:]=1
             wk[k<1e-4]=0
-            wk[k>=self.kmax]=0
+            wk[k>=lens_kmax]=0
             pkin = self.PK.P(self.zs, k, grid=False)
             common = ((wk*pkin)*precalcFactor)[self.zs>=self.zmin]        
             estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(lensingwindow*lensingwindow)[self.zs>=self.zmin])
@@ -202,45 +256,73 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
             cl_cross.append(estCl)
         return np.array(cl_cross)
 
-    def get_spectra(self,mean_z,width):
-        self.spectra_dict={'clgg':self.get_clgg(mean_z,width),
-        'clkk':self.get_clkk(),'clkg':self.get_clkg(mean_z,width) }
-        self.spectra=[self.get_clgg(mean_z,width),self.get_clkg(mean_z,width),self.get_clkk()]
+    def get_clcibk(self,cib_window,lmax=2000):
+        cSpeedKmPerSec = 299792.458
+
+        cl_cibk=[]
+        wkc = np.ones(self.chis.shape)
+        lensingwindow=self.get_lensing_window()
+        ells=np.arange(2000)
+        precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
+
+        for l in ells:
+            k=(l)/self.chis
+            wkc[:]=1
+            wkc[k<1e-4]=0
+            wkc[k>=self.kmax]=0
+            pkin = self.PK.P(self.zs, k, grid=False)
+            common = ((wkc*pkin)*precalcFactor)[self.zs>=self.zmin]      
+            estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(lensingwindow*cib_window)[self.zs>=self.zmin])
+            cl_cibk.append(estCl)
+        return np.array(cl_cibk)
+
+    def get_cibspectra(self,mean_z,width):
+        #prepare normal and cleaned fields for the cib
+
+        cib_window=self.cib_window(545)
+        galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
+        clgg=self.get_clgg(galaxywindow)
+        print("clgg")
+        clcib=self.get_clcib(cib_window)
+        clkk=self.get_clkk()
+        clkg=self.get_clkg(galaxywindow)
+        clcibk=self.get_clcibk(cib_window)
+        self.windows=[galaxywindow,self.get_lensing_window(),cib_window]
+        self.spectra=[clgg,clkg,clkk,clcib,clcibk,clkk-(clcibk**2/clcib)]
         return np.array(self.spectra)
     
-    def get_lsst_lensing(self):
+    def get_lsst_lensing(self,lenszmin=0):
         fields={}
         field_list=[]
         for i in range(len(self.LSST_bins)-1):
             fields[f'g{i}g{i}']=self.get_lsst_auto(i)
             field_list.append(fields[f'g{i}g{i}'])
         for i in range(len(self.LSST_bins)-1):
-            fields[f'kg{i}']=self.get_lsst_kappa(i)
+            fields[f'kg{i}']=self.get_lsst_kappa(i,zmin=lenszmin)
             field_list.append(fields[f'kg{i}'])
     
-
-            
-        fields['kk']=self.get_clkk()
+        fields['kk']=self.get_clkk(zmin=lenszmin)
         field_list.append(fields['kk'])
+        #lets artificially set the low z part of kappa to zero
         field_list=np.array(field_list)
         return fields,field_list
      
     
     #for this problem we need three fields, g1, cmb and the external tracer
-    def get_fields(self):
-        """
-        g1=self.bias*self.get_lensing_window()
-        g1[self.zs>0.3]=0
-        g2=self.get_lensing_window()
-        g3=self.get_lensing_window()
-        g3[self.zs<0.3]=0
-        """
-        
-        g1=self.dndz_gauss(self.zs,0.2,0.5)
-        g1[self.zs>0.3]=0
-        g2=self.get_lensing_window()
-        g3=self.dndz_gauss(self.zs,4,1)
-        g3[self.zs<0.3]=0
+    def get_fields(self,idealised=False):
+        if idealised==True:
+            g1=self.bias*self.get_lensing_window()
+            g1[self.zs>0.3]=0
+            g2=self.get_lensing_window()
+            g3=self.get_lensing_window()
+            g3[self.zs<0.3]=0
+        else:
+            #g1=self.dndz_gauss(self.zs,0.1,0.25)
+            g1=self.bias*self.get_lensing_window()
+            g1[self.zs>0.3]=0
+            g2=self.get_lensing_window()
+            g3=self.dndz_gauss(self.zs,2,10)
+            g3[self.zs<0.3]=0
         
 
         self.windows=[g1,g2,g3]
@@ -250,18 +332,53 @@ var1='delta_nonu',var2='delta_nonu', zmax=self.zs[-1])
 
 
 
-def LSST_derivative_parameter(ells,defaultCosmology,parameter,delta=0.005,nz=1000,kmax=10,zmin=0):
+def LSST_derivative_parameter(defaultCosmology,parameter,delta,lenszmin=0,nz=1000,kmax=10,zmin=0,ells=2000):
+    """
+    take derivative with respect to a given parameter.
+    """
+    left,right=delta
+    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta)
+    high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
+    low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
+    #derivative=(high.get_spectra(mean_z,width)-low.get_spectra(mean_z,width))/(2*delta*defaultCosmology[parameter])
+    derivative=(high.get_lsst_lensing(lenszmin)[1]-low.get_lsst_lensing(lenszmin)[1])/((right+left)*defaultCosmology[parameter])
+    #put the above in a dictionary
+    dicti={}
+    for i in range(len(derivative)):
+        if i<=15:
+            dicti[f'g{i}g{i}']=derivative[i]
+        elif 16<=i<32:
+            dicti[f'kg{i-16}']=derivative[i]
+        else:
+            dicti['kk']=derivative[i]
+    #return dicti
+    return derivative
+
+def arraytodict(array):
+    dicti={}
+    for i in range(len(array)):
+        if i<=15:
+            dicti[f'g{i}g{i}']=array[i]
+        elif 16<=i<32:
+            dicti[f'kg{i-16}']=array[i]
+        else:
+            dicti['kk']=array[i]
+    return dicti
+
+
+def derivative_parameter(ells,mean_z,width,defaultCosmology,parameter,delta=0.005,nz=1000,kmax=10,zmin=0,idealised=False):
     """
     take derivative with respect to a given parameter.
     """
     cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta=delta)
     high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
+
     #derivative=(high.get_spectra(mean_z,width)-low.get_spectra(mean_z,width))/(2*delta*defaultCosmology[parameter])
-    derivative=(high.get_lsst_lensing()[1]-low.get_lsst_lensing()[1])/(2*delta*defaultCosmology[parameter])
+    derivative=(high.get_fields(idealised=idealised)-low.get_fields(idealised=idealised))/(2*delta*defaultCosmology[parameter])
     return derivative
 
-def derivative_parameter(ells,mean_z,width,defaultCosmology,parameter,delta=0.005,nz=1000,kmax=10,zmin=0):
+def derivative_parameter_CIB(ells,mean_z,width,defaultCosmology,parameter,delta=0.005,nz=1000,kmax=10,zmin=0,idealised=False):
     """
     take derivative with respect to a given parameter.
     """
@@ -270,9 +387,23 @@ def derivative_parameter(ells,mean_z,width,defaultCosmology,parameter,delta=0.00
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
 
     #derivative=(high.get_spectra(mean_z,width)-low.get_spectra(mean_z,width))/(2*delta*defaultCosmology[parameter])
-    derivative=(high.get_fields()-low.get_fields())/(2*delta*defaultCosmology[parameter])
+    derivative=(high.get_cibspectra(mean_z,width)-low.get_cibspectra(mean_z,width))/(2*delta*defaultCosmology[parameter])
     return derivative
 
+def get_der(defaultCosmology,cut,spectra,pars,cleaned=False):
+    """derivative function used for fisher"""
+    ells=np.arange(len(list(spectra.items())[0][1]))
+    der_spectra_alpha = np.ones((len(list(spectra.items())[0][1]), len(spectra), len(pars)))
+    for i in range(len(pars)):
+        print(f"Taking field derivatives wrt {pars[i]}")
+        der=derivative_parameter(ells,1,0.5,defaultCosmology,pars[i],delta=0.00005)
+        der_spectra_alpha[:, 0, i] = der[1][:cut]
+        der_spectra_alpha[:, 1, i] = der[0][:cut]
+        if cleaned==True:
+            der_spectra_alpha[:, 2, i] = der[-1][:cut]
+        else:
+            der_spectra_alpha[:, 2, i] = der[2][:cut]
+    return der_spectra_alpha
 
 
 class CMB_Primary():
@@ -536,3 +667,298 @@ def get_DESI_highz():
     sigma_fk_errorhigh=np.array([0.57,0.48,0.47,0.49,0.58,0.60,0.61,0.92,0.98,1.16,1.76,2.88,2.92])
     highz=BAO_Experiment(zs_high,sigma_fk_errorhigh)
     return highz
+
+
+class CMB_Lensing():
+    """Produce lensing kappa noise from pytempura. Useful to combine with CMB primary fisher forecast
+    """
+    
+        # DEFAULTS ARE FOR PLANCK EXPERIMENT
+    def __init__(self, 
+             lens_beam = 7.0,lens_noiseT = 33.,lens_noiseP = 56.,
+             lens_tellmin = 2,lens_tellmax = 3000,lens_pellmin = 2,
+             lens_pellmax = 3000,lens_kmin = 80,lens_kmax = 3000, lens_f_sky=0.65, estimators=('TT','TE','EE','EB','TB','MV'), 
+                NlTT=None, NlEE=None, NlBB=None):
+
+        # get lensing noise
+        # Initialize cosmology and Clkk. Later parts need dimensionless spectra.
+        self.l_min = lens_tellmin
+        self.l_max = min(max(lens_tellmax, lens_pellmax)+1000,5500) 
+        self.k_min = lens_kmin
+        self.k_max = lens_kmax
+        self.f_sky = lens_f_sky
+        
+        from falafel import utils
+        import pytempura
+        # generate cosmology with orphics
+        lmax = self.l_max
+        ells = np.arange(0,lmax+1,1)
+        Tcmb = 2.726
+        
+        # compute noise curves
+        sT = lens_noiseT * (np.pi/60./180.)
+        sP = lens_noiseP * (np.pi/60./180.)
+        theta_FWHM = lens_beam * (np.pi/60./180.)
+        muK = Tcmb*1.0e6
+        # unitless white noise
+        exp_term = np.exp(ells*(ells+1)*(theta_FWHM**2)/(8*np.log(2)))
+        if NlTT is None:
+            NlTT = sT**2 * exp_term #/ muK**2
+        else:
+            NlTT = NlTT[ells]
+        if NlEE is None:
+            NlEE = sP**2 * exp_term #/ muK**2
+        else:
+            NlEE = NlEE[ells]
+        if NlBB is None:
+            NlBB = sP**2 * exp_term #/ muK**2
+        else:
+            NlBB = NlBB[ells]
+            
+            
+        NlTT[ells > lens_tellmax] = 1e100
+        NlEE[ells > lens_pellmax] = 1e100
+        NlBB[ells > lens_pellmax] = 1e100
+            
+        self.NlTT = NlTT
+        self.NlEE = NlEE
+        self.NlBB = NlBB
+        noise={'TT':NlTT,'EE':NlEE,'BB':NlBB}
+
+        est_norm_list=['TT','TE','EE','EB','TB','MV']
+
+        ucls,tcls = utils.get_theory_dicts(nells=noise,lmax=lmax,grad=True)
+        Als = pytempura.get_norms(est_norm_list,ucls,tcls,self.l_min,lmax,k_ellmax=lens_kmax)
+        ls = np.arange(Als['MV'][0].size)
+        self.noise_k = np.interp(np.arange(self.l_max+1), ls, Als['TT'][0]* (ls*(ls+1.)/2.)**2.)
+
+        self.noise_k[np.arange(self.l_max+1) <= lens_kmin] = 1e100
+        self.noise_k[np.arange(self.l_max+1) >= lens_kmax] = 1e100
+
+
+    def compute_fisher_from_spectra(self, fid, df, pars):
+        """
+        Compute the Fisher matrix given fiducial and derivative dicts.
+        This function is for generality, to enable easier interfacing with
+        codes like CAMB. The input parameters must be in the units of the
+        noise, muK^2.
+        Parameters
+        ----------
+        fid (dictionary) : keys are '{parameter_XY}' with XY in {tt, te, ee}.
+            These keys point to the actual power spectra.
+        df (dictionary) :  keys are '{parameter_XY}' with XY in {tt, te, ee}.
+            These keys point to numerically estimated derivatives generated
+            from precomputed cosmologies.
+        pars (list of strings) : the parameters being constrained in the
+            Fisher analysis.
+        """
+        npar = len(pars)
+        self.fisher = np.zeros((npar, npar))
+        print()
+        for i,j in itertools.combinations_with_replacement( range(npar),r=2):
+            # following eq 4 of https://arxiv.org/pdf/1402.4108.pdf
+            fisher_ij = 0.0
+            for l in range(self.k_min, self.k_max):
+
+                Clkk_plus_Nlkk_sq = (fid['kk'][l] + self.noise_k[l])**2
+                dCl_kk = df[pars[i]+'_kk'][l]
+                
+                fisher_contrib = (2*l+1)/2. * self.f_sky * \
+                    (df[pars[i]+'_kk'][l] * 
+                     df[pars[j]+'_kk'][l])/Clkk_plus_Nlkk_sq
+                fisher_ij += fisher_contrib
+                
+            # fisher is diagonal
+            self.fisher[i,j] = fisher_ij
+            self.fisher[j,i] = fisher_ij
+        
+        return self.fisher
+
+    def get_fisher(self, obs, lensed_Cl=True):
+        """
+        Return a Fisher matrix using a dictionary full of CLASS objects.
+        This function wraps the functionality of `compute_fisher_from_spectra`,
+        for use with a dictionary filled with CLASS objects.
+        Parameters
+        ----------
+            obs (Observations instance) : contains many evaluated CLASS cosmologies, at
+                both the derivatives and the fiducial in the cosmos object.
+        Returns
+        -------
+            Numpy array of floats with dimensions (len(params), len(params))
+        """
+        # first compute the fiducial
+        fid_cosmo = obs.cosmos['fiducial']
+        Tcmb = fid_cosmo.T_cmb()
+        fid_cl = fid_cosmo.lensed_cl(self.l_max)
+        
+        fid = {'kk': 0.25 * ((fid_cl['ell']+1)
+               *(fid_cl['ell']))**2 * fid_cl['pp']}
+
+
+        # the primary task of this function is to compute the derivatives from `cosmos`,
+        # the dictionary of computed CLASS cosmologies
+        dx_array = np.array(obs.right) - np.array(obs.left)
+
+        df = {}
+        # loop over parameters, and compute derivatives
+        for par, dx in zip(obs.parameters, dx_array):
+            cl_left = obs.cosmos[par + '_left'].lensed_cl(self.l_max)
+            cl_right = obs.cosmos[par + '_right'].lensed_cl(self.l_max)
+            
+            kk_left = (0.25 * (cl_left['ell']+2)*(cl_left['ell']+1)
+                      *(cl_left['ell'])*(cl_left['ell']-1) * cl_left['pp'])
+            kk_right = (0.25 * (cl_right['ell']+2)*(cl_right['ell']+1)
+                      *(cl_right['ell'])*(cl_right['ell']-1) * cl_right['pp'])
+
+            df[par + '_kk'] = (kk_right - kk_left) / dx
+        self.df = df
+        self.fid = fid
+        
+        return self.compute_fisher_from_spectra(fid,
+                                                df,
+                                                obs.parameters)
+
+
+import itertools
+class LSSTxlensing():
+    """
+    Class for computing Fisher matrices from LSSTxlensing.
+
+    """
+
+    def __init__(self, fid,spectra,der_spectra,pars,lensingnoise,f_sky=0.65, l_min=10, l_max=1000,nbar=66):
+        self.f_sky = f_sky
+        self.spectra=spectra
+        self.der_spectra=der_spectra
+        self.fid=fid
+        self.pars=pars
+        self.Npars=len(self.pars)
+        self.ells = np.arange(l_min,l_max)
+        self.l_min = l_min
+        self.l_max = l_max
+        self.shotnoise=1/nbar
+        #convert shotnoise from arcmin^2 to rad
+        self.shotnoise*= (np.pi/60./180.)**2
+        self.lensingnoise=lensingnoise
+
+
+    def get_modes(self):
+        deltaL=np.zeros(len(self.ells))
+        deltaL[0]=self.ells[0]-0
+        deltaL[1:]=self.ells[1:]-self.ells[:-1] 
+        result = (2*self.ells*deltaL*self.f_sky)
+        return 1/result
+
+    def get_Cl(self,X,Y):
+        """X:g,k
+           Y:gi,g
+        """
+        kappa_noise=(self.lensingnoise[self.l_min:self.l_max]+self.fid[f'kk'][self.l_min:self.l_max])*np.sqrt(self.get_modes())
+        if X+Y in [f'g{i}g{i}' for i in range(16)]:
+            Cl=self.fid[f'{X+Y}'][self.l_min:self.l_max]+self.shotnoise
+        elif Y+X in [f'g{i}g{i}' for i in range(16)]:
+            Cl=self.fid[f'{Y+X}'][self.l_min:self.l_max]+self.shotnoise
+        elif X+Y in [f'kg{i}' for i in range(16)]:
+            Cl=self.fid[f'{X+Y}'][self.l_min:self.l_max]
+        elif Y+X in [f'kg{i}' for i in range(16)]:
+            Cl=self.fid[f'{Y+X}'][self.l_min:self.l_max]
+        elif X+Y in ['kk']:
+            Cl=self.fid[f'kk'][self.l_min:self.l_max]+kappa_noise
+        else:
+            #print("cross cls not present")
+            Cl=np.ones(len(self.ells))*0
+        return Cl
+
+    def get_derCl(self,der,X,Y):
+        """X:g,k
+           Y:gi,g
+        """
+        if X+Y in [f'g{i}g{i}' for i in range(16)]:
+            Cl=der[f'{X+Y}'][self.l_min:self.l_max]+self.shotnoise
+        elif Y+X in [f'g{i}g{i}' for i in range(16)]:
+            Cl=der[f'{Y+X}'][self.l_min:self.l_max]+self.shotnoise
+        elif X+Y in [f'kg{i}' for i in range(16)]:
+            Cl=der[f'{X+Y}'][self.l_min:self.l_max]
+        elif Y+X in [f'kg{i}' for i in range(16)]:
+            Cl=der[f'{Y+X}'][self.l_min:self.l_max]
+        elif X+Y in ['kk']:
+            Cl=der[f'kk'][self.l_min:self.l_max]
+        else:
+            #print("cross cls not present")
+            Cl=np.ones(len(self.ells))*0
+        return Cl
+
+    def get_cov(self,X,Y,W,Z):
+            return self.get_modes()*(self.get_Cl(X,W)*self.get_Cl(Y,Z)+self.get_Cl(X,Z)*self.get_Cl(Y,W))
+
+    def get_covmat(self):
+        self.covmat=np.zeros((len(self.ells),len(self.spectra),len(self.spectra)))
+        self.cov_dict = {}
+        for i in range(len(self.spectra)): 
+            for j in range(len(self.spectra)):
+                if i<16 or i>32:
+                    X=list(self.spectra)[i][:2]
+                    Y=list(self.spectra)[i][2:]
+                elif i in range(16,32):
+                    X=list(self.spectra)[i][0]
+                    Y=list(self.spectra)[i][1:]
+                elif i==32:
+                    X,Y=list(self.spectra)[i]
+                if j<16 or j>32:
+                    W=list(self.spectra)[j][:2]
+                    Z=list(self.spectra)[j][2:]
+                elif j in range(16,32):
+                    W=list(self.spectra)[j][0]
+                    Z=list(self.spectra)[j][1:]
+                elif i==32:
+                    W,Z=list(self.spectra)[j]
+                self.covmat[:,i,j]=self.get_cov(X,Y,W,Z)
+                self.cov_dict[list(self.spectra)[i]+','+list(self.spectra)[j]]= self.get_cov(X,Y,W,Z)
+        return self.covmat
+    
+    def get_covmatnew(self):
+        """use this one"""
+        lista = [f'g{i}' for i in range(16)]
+        lista.append('k')
+        allcombs = list(itertools.combinations_with_replacement(lista, 2))
+        self.covmat=np.zeros((len(self.ells),len(allcombs),len(allcombs)))
+        self.cov_dict = {}
+        for cA in allcombs:
+            for cB in allcombs:
+                a, b = cA
+                c, d = cB
+                i, j = allcombs.index(cA), allcombs.index(cB)
+                self.covmat[:,i,j]=self.get_cov(a, b, c, d)
+                self.cov_dict[a+b+c+d]= self.covmat[:,i,j]
+        return self.covmat
+    
+    def prepare_derivatives(self):
+        lista = [f'g{i}' for i in range(16)]
+        lista.append('k')
+        allcombs = list(itertools.combinations_with_replacement(lista, 2))
+        der_spectra_alpha = np.ones((len(self.ells), len(allcombs), self.Npars))
+        for i in range(self.Npars):
+            for cA in allcombs:
+                    a, b = cA
+                    ind= allcombs.index(cA)
+                    der_spectra_alpha[:,ind,i]=self.get_derCl(self.der_spectra[i],a,b)
+        return der_spectra_alpha
+    
+    
+    def get_fisher(self):
+        lista = [f'g{i}' for i in range(16)]
+        lista.append('k')
+        allcombs = list(itertools.combinations_with_replacement(lista, 2))     
+        #derivatives check shape (ells,len(spectra),len(pars))
+        derivatives=self.prepare_derivatives()
+        assert(derivatives.shape[0] == len(self.ells)) 
+        assert(derivatives.shape[1] == len(allcombs)) 
+        assert(derivatives.shape[2] == self.Npars)
+        fisher_per_mode = np.einsum('...ik, ...ij, ...jm -> ...km',derivatives, np.nan_to_num(np.linalg.inv(self.get_covmatnew())), derivatives)
+        self.fisher_per_mode=fisher_per_mode
+        print(fisher_per_mode)
+        self.error_per_mode_non_marginalized = np.nan_to_num(np.diagonal(fisher_per_mode,axis1 = 1, axis2 = 2)**-0.5)
+        
+        self.fisher=np.sum(self.fisher_per_mode,axis=0)
+        return self.fisher

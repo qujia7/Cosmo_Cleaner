@@ -100,9 +100,7 @@ class Forecaster():
         fisher_per_mode = np.einsum('...ik, ...ij, ...jm -> ...km',der_spectra_alpha, np.nan_to_num(self.invcov), der_spectra_alpha)
         self.error_per_mode_non_marginalized = np.nan_to_num(np.diagonal(fisher_per_mode,axis1 = 1, axis2 = 2)**-0.5)
         fisher_integrated = np.sum(fisher_per_mode, axis = 0) 
-        print(fisher_integrated)
         self.fisher = fisher_integrated 
-        print(self.fisher)
         self.error_non_marginalized = np.nan_to_num(np.diag(self.fisher)**-0.5 )
         self.error_marginalized = np.nan_to_num(np.linalg.inv(self.fisher)**0.5 )
         return self.error_marginalized

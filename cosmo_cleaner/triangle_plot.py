@@ -132,7 +132,7 @@ def plot_ellipse(ax, par1, par2, parameters, fiducial, cov,
 
 
 def plot_triangle_base(params, fiducial, cov, f=None, ax=None,
-                       positive_definite=[],
+                       positive_definite=[], one_sigma_only=False,
                        labels=None, scales=None,
                        ellipse_kwargs1={'ls': '--', 'edgecolor': 'blue'},
                        ellipse_kwargs2={'ls': '-', 'edgecolor': 'blue'},
@@ -225,7 +225,7 @@ def plot_triangle_base(params, fiducial, cov, f=None, ax=None,
                 if ii < jj:
                     plot_ellipse(ax[jj, ii], params[ii],
                                  params[jj], params, fiducial, cov,
-                                 positive_definite=positive_definite,
+                                 positive_definite=positive_definite,one_sigma_only=one_sigma_only,
                                  scale1=scales[ii], scale2=scales[jj],
                                  kwargs1=ellipse_kwargs1,
                                  kwargs2=ellipse_kwargs2)
@@ -262,7 +262,7 @@ def plot_triangle_base(params, fiducial, cov, f=None, ax=None,
     return f, ax
 
 
-def plot_triangle(parameter,fiducial, cov, f=None, ax=None, color='black', positive_definite=[],
+def plot_triangle(parameters,fiducial, cov, f=None, ax=None, color='black', positive_definite=[],
                   labels=None, scales=None):
     """
     Makes a standard triangle plot using the fishchips `obs` and `cov` objects.
