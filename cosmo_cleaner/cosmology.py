@@ -304,10 +304,17 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
             cl_cibk.append(estCl)
         return np.array(cl_cibk)
 
-    def get_cibspectra(self,mean_z,width,cib_noise=0.,galaxy_noise=0.):
+    def get_cibspectra(self,mean_z,width,cib_noise=0.,galaxy_noise=0.,lsst=False):
         #prepare normal and cleaned fields for the cib
         cib_window=self.cib_window(545,self.zs,noise=cib_noise)
-        galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
+        if lsst==False:
+            galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
+        else:
+            print("use lsst")
+            galaxywindow=self.lsst_window(0,B=1)
+            galaxywindow[self.zs<0.5]*=self.A_e
+            galaxywindow[self.zs>0.5]*=self.Alens
+            galaxywindow*=self.bias
         clgg=self.get_clgg(galaxywindow)
         #clcib=self.get_clcib(self.cib_window(545,self.zs,noise=0))
         clcib=self.get_clcib(cib_window)
@@ -344,23 +351,44 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
             fields[f'kg{i}']=self.get_lsst_kappa(i,zmin=lenszmin,lmax=lmax)
             field_list.append(fields[f'kg{i}'])
 
-        #include cross correlation between neighboring and next to neighboring bins
-        """
-        for i in range(len(self.LSST_bins)-3):
-            fields[f'g{i}g{i+1}']=self.get_lsst_auto(i,i+1,lmax=lmax)
-            fields[f'g{i}g{i+2}']=self.get_lsst_auto(i,i+2,lmax=lmax)
-            field_list.append(fields[f'g{i}g{i+1}'])
-            field_list.append(fields[f'g{i}g{i+2}'])
-        fields[f'g{14}g{15}']=self.get_lsst_auto(14,15,lmax=lmax)
-        field_list.append(fields[f'g{14}g{15}'])
-        """
-
-
         fields['kk']=self.get_clkk(zmin=lenszmin,lmax=lmax)
         field_list.append(fields['kk'])
         #lets artificially set the low z part of kappa to zero
         field_list=np.array(field_list)
         return fields,field_list
+
+    def get_lsst_lensing_cross(self,lenszmin=0,lmax=2000):
+        fields={}
+        field_list=[]
+        for i in range(len(self.LSST_bins)-1):
+            fields[f'g{i}g{i}']=self.get_lsst_auto(i,lmax=lmax)
+            field_list.append(fields[f'g{i}g{i}'])
+        for i in range(len(self.LSST_bins)-1):
+            fields[f'kg{i}']=self.get_lsst_kappa(i,zmin=lenszmin,lmax=lmax)
+            field_list.append(fields[f'kg{i}'])
+        for i in range(len(self.LSST_bins)-1):
+            for j in range(i+1,len(self.LSST_bins)-1):
+                fields[f'g{i}g{j}']=self.get_lsst_auto(i,j,lmax=lmax)
+                field_list.append(fields[f'g{i}g{j}'])
+        fields['kk']=self.get_clkk(zmin=lenszmin,lmax=lmax)
+        field_list.append(fields['kk'])
+        
+
+        field_list=np.array(field_list)
+        return fields,field_list
+
+    def get_LSST_lensing_test(self,galaxy_bin,nlgg=np.zeros(3000),nlkk=np.zeros(3000)):
+        #prepare normal and cleaned fields for lensing using LSST
+        galaxywindow=self.lsst_window(galaxy_bin,self.lsst_bias[galaxy_bin])
+        lmax=len(self.get_clgg(galaxywindow))
+        clgg=self.get_clgg(galaxywindow)+nlgg[:lmax]
+        #clcib=self.get_clcib(self.cib_window(545,self.zs,noise=0))
+        clkk=self.get_clkk()+nlkk[:lmax]
+        clkg=self.get_clkg(galaxywindow)
+        self.windows=[galaxywindow,self.get_lensing_window()]
+        #the clcibk should contain the noise
+        self.spectra=[clgg,clkg,clkk,clkk-(clkg**2/clgg)]
+        return np.array(self.spectra)
      
     
     #for this problem we need three fields, g1, cmb and the external tracer
@@ -386,8 +414,6 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
     
     def lensing_only(self,zmin):
         return self.get_clkk(zmin=zmin)
-
-
 
 
 
@@ -453,16 +479,17 @@ def derivative_lensing(ells,mean_z,width,defaultCosmology,parameter,delta,nz=100
     derivative=(high.lensing_only(zmin=zlensing)-low.lensing_only(zmin=zlensing))/((right+left))
     return derivative
 
-def derivative_parameter_CIB(ells,mean_z,width,defaultCosmology,parameter,delta=0.005,nz=1000,kmax=10,zmin=0,idealised=False):
+def derivative_parameter_CIB(ells,mean_z,width,defaultCosmology,parameter,delta,nz=1000,kmax=10,zmin=0,lsst=False):
     """
     take derivative with respect to a given parameter.
     """
+    left,right=delta
     cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta=delta)
     high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
 
     #derivative=(high.get_spectra(mean_z,width)-low.get_spectra(mean_z,width))/(2*delta*defaultCosmology[parameter])
-    derivative=(high.get_cibspectra(mean_z,width)-low.get_cibspectra(mean_z,width))/(2*delta*defaultCosmology[parameter])
+    derivative=(high.get_cibspectra(mean_z,width,lsst=lsst)-low.get_cibspectra(mean_z,width,lsst=lsst))/((right+left))
     return derivative
 
 def get_der(defaultCosmology,cut,spectra,pars,cleaned=False):
