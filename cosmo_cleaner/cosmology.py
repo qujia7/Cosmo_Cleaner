@@ -8,7 +8,7 @@ from scipy.special import erf
 
 #finite difference
 #insert the parameter you would like to vary
-def get_cosmology_var(defaultCosmology,par,delta):
+def get_cosmology_var(defaultCosmology,par,delta,use_theta=False):
     """
     default cosmology: dict containing default cosmology values
     par: parameter you are finding derivative of, keeping others constant
@@ -25,9 +25,15 @@ def get_cosmology_var(defaultCosmology,par,delta):
     for i in range(2):
         pars = camb.CAMBparams()
         pars.set_dark_energy(w=Cosmology_l[i]['w0'],wa = Cosmology_l[i]['wa'], dark_energy_model = 'ppf')
-        pars.set_cosmology(H0=Cosmology_l[i]['H0'], cosmomc_theta = None,ombh2=Cosmology_l[i]['ombh2'], 
-                       omch2=Cosmology_l[i]['omch2'],omk=Cosmology_l[i]['omega_k'], mnu=Cosmology_l[i]['mnu'], tau = Cosmology_l[i]['tau'],
-                       nnu = Cosmology_l[i]['nnu'], num_massive_neutrinos = 1)
+        if use_theta is True:
+            pars.set_cosmology( cosmomc_theta = Cosmology_l[i]['mctheta'],ombh2=Cosmology_l[i]['ombh2'], 
+                        omch2=Cosmology_l[i]['omch2'],omk=Cosmology_l[i]['omega_k'], mnu=Cosmology_l[i]['mnu'], tau = Cosmology_l[i]['tau'],
+                        nnu = Cosmology_l[i]['nnu'], num_massive_neutrinos = 1)
+        
+        else:
+            pars.set_cosmology(H0=Cosmology_l[i]['H0'], cosmomc_theta = None,ombh2=Cosmology_l[i]['ombh2'], 
+                        omch2=Cosmology_l[i]['omch2'],omk=Cosmology_l[i]['omega_k'], mnu=Cosmology_l[i]['mnu'], tau = Cosmology_l[i]['tau'],
+                        nnu = Cosmology_l[i]['nnu'], num_massive_neutrinos = 1)
         pars.NonLinear = model.NonLinear_both
         pars.InitPower.set_params(ns=Cosmology_l[i]['ns'],As=Cosmology_l[i]['As'])
 
@@ -66,6 +72,7 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
 
         self.LSST_bins=np.array([0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.3, 2.6, 3, 3.5, 4, 7])
         self.lsst_bias=np.array([cosmology[f'lsst_bias{i}'] for i in range(len(self.LSST_bins)-1)])
+        self.bincenters=self.LSST_bins[:-1]+np.diff(self.LSST_bins)/2
         start=self.LSST_bins[:-1]
         end= self.LSST_bins[1:] 
         self.LSST_z=[]
@@ -122,32 +129,45 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
                 #cl_cross.append(0)
         return np.array(cl_cross)
 
-    def get_lsst_auto(self,i,j=None,lmax=2000):
+    def get_lsst_auto(self,i,j=None,lmax=2000,cut=0.3*0.67):
         #int i: ith bin
         #int j:jth bin
         cSpeedKmPerSec = 299792.458
         galaxywindow=self.lsst_window(i,self.lsst_bias[i])
         if j is not None:
             galaxywindow2=self.lsst_window(j,self.lsst_bias[j])
+            chi1_z=self.results.comoving_radial_distance(self.bincenters[i])
+            chi2_z=self.results.comoving_radial_distance(self.bincenters[j])
+            #chi_z=min(chi1_z,chi2_z)
+            chi_z=4000
+
         else:
             galaxywindow2=galaxywindow
             j=i
+            chi_z=self.results.comoving_radial_distance(self.bincenters[i])
+        k_cut=cut*chi_z
 
         cl_autog=[]
         ellsgg=np.arange(lmax)
         wg = np.ones(self.chis.shape)
-
         precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
         for l in ellsgg:
             #if l<=lbmax:
-            k=(l+0.5)/self.chis
-            wg[:]=1
-            wg[k<1e-4]=0
-            wg[k>=self.kmax]=0 
-            pkin = self.PK.P(self.zs, k, grid=False)
-            common = ((wg*pkin)*precalcFactor)[self.zs>=self.zmin]        
-            estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(galaxywindow*galaxywindow2)[self.zs>=self.zmin])
+            if l<k_cut:
+                k=(l+0.5)/self.chis
+                wg[:]=1
+                wg[k<1e-4]=0
+                wg[k>=self.kmax]=0
+                #wg[k>=k_cut]=1e30
+                pkin = self.PK.P(self.zs, k, grid=False)
+                common = ((wg*pkin)*precalcFactor)[self.zs>=self.zmin]        
+                estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(galaxywindow*galaxywindow2)[self.zs>=self.zmin])
+            else:
+                estCl=1e30
+            #new 15Oct2021 impose sale cut by setting l>lmax to infty
+            
             cl_autog.append(estCl)
+            
             #else:
                 #cl_autog.append(0.)
         return np.array(cl_autog)
@@ -341,11 +361,11 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
         self.spectra=[clgg,clkg,clkk,clcib,clcibk,clkk-(clcibk**2/clcib)]
         return np.array(self.spectra)
 
-    def get_lsst_lensing(self,lenszmin=0,lmax=2000):
+    def get_lsst_lensing(self,lenszmin=0,lmax=2000,cut=0.3*0.67):
         fields={}
         field_list=[]
         for i in range(len(self.LSST_bins)-1):
-            fields[f'g{i}g{i}']=self.get_lsst_auto(i,lmax=lmax)
+            fields[f'g{i}g{i}']=self.get_lsst_auto(i,lmax=lmax,cut=cut)
             field_list.append(fields[f'g{i}g{i}'])
         for i in range(len(self.LSST_bins)-1):
             fields[f'kg{i}']=self.get_lsst_kappa(i,zmin=lenszmin,lmax=lmax)
@@ -357,18 +377,18 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
         field_list=np.array(field_list)
         return fields,field_list
 
-    def get_lsst_lensing_cross(self,lenszmin=0,lmax=2000):
+    def get_lsst_lensing_cross(self,lenszmin=0,lmax=2000,cut=0.3*0.67):
         fields={}
         field_list=[]
         for i in range(len(self.LSST_bins)-1):
-            fields[f'g{i}g{i}']=self.get_lsst_auto(i,lmax=lmax)
+            fields[f'g{i}g{i}']=self.get_lsst_auto(i,lmax=lmax,cut=cut)
             field_list.append(fields[f'g{i}g{i}'])
         for i in range(len(self.LSST_bins)-1):
             fields[f'kg{i}']=self.get_lsst_kappa(i,zmin=lenszmin,lmax=lmax)
             field_list.append(fields[f'kg{i}'])
         for i in range(len(self.LSST_bins)-1):
             for j in range(i+1,len(self.LSST_bins)-1):
-                fields[f'g{i}g{j}']=self.get_lsst_auto(i,j,lmax=lmax)
+                fields[f'g{i}g{j}']=self.get_lsst_auto(i,j,lmax=lmax,cut=cut)
                 field_list.append(fields[f'g{i}g{j}'])
         fields['kk']=self.get_clkk(zmin=lenszmin,lmax=lmax)
         field_list.append(fields['kk'])
@@ -419,15 +439,16 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
 
 
 
-def LSST_derivative_parameter(defaultCosmology,parameter,delta,lenszmin=0,nz=1000,kmax=10,zmin=0,ells=2000):
+def LSST_derivative_parameter(defaultCosmology,parameter,delta,lenszmin=0,nz=1000,kmax=10,zmin=0,ells=2000,cut=0.3*0.67,use_theta=False):
     """
     take derivative with respect to a given parameter.
     """
+    print(cut)
     left,right=delta
-    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta)
+    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta,use_theta=use_theta)
     high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
-    derivative=(high.get_lsst_lensing(lenszmin,lmax=ells)[1]-low.get_lsst_lensing(lenszmin,lmax=ells)[1])/((right+left))
+    derivative=(high.get_lsst_lensing(lenszmin,lmax=ells,cut=cut)[1]-low.get_lsst_lensing(lenszmin,lmax=ells,cut=cut)[1])/((right+left))
     #put the above in a dictionary
     #return dicti
     return derivative
@@ -440,12 +461,12 @@ def arraytodict(keys,array):
     return dicti
 
 
-def derivative_parameter(ells,defaultCosmology,parameter,delta,nz=1000,kmax=10,zmin=0,idealised=False):
+def derivative_parameter(ells,defaultCosmology,parameter,delta,nz=1000,kmax=10,zmin=0,idealised=False,use_theta=False):
     """
     take derivative with respect to a given parameter.
     """
     left,right=delta
-    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta)
+    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta,use_theta=use_theta)
     high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
 
@@ -453,12 +474,12 @@ def derivative_parameter(ells,defaultCosmology,parameter,delta,nz=1000,kmax=10,z
     derivative=(high.get_fields(idealised=idealised)-low.get_fields(idealised=idealised))/((right+left))
     return derivative
 
-def derivative_ciblsst(ells,defaultCosmology,parameter,delta,galaxy_bin,nz=1000,kmax=10,zmin=0):
+def derivative_ciblsst(ells,defaultCosmology,parameter,delta,galaxy_bin,nz=1000,kmax=10,zmin=0,use_theta=False):
     """
     take derivative with respect to a given parameter.
     """
     left,right=delta
-    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta)
+    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta,use_theta=use_theta)
     high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
 
@@ -466,12 +487,12 @@ def derivative_ciblsst(ells,defaultCosmology,parameter,delta,galaxy_bin,nz=1000,
     derivative=(high.get_cibxLSST(galaxy_bin)-low.get_cibxLSST(galaxy_bin))/((right+left))
     return derivative
 
-def derivative_lensing(ells,mean_z,width,defaultCosmology,parameter,delta,nz=1000,kmax=10,zmin=0,zlensing=0,idealised=False):
+def derivative_lensing(ells,mean_z,width,defaultCosmology,parameter,delta,nz=1000,kmax=10,zmin=0,zlensing=0,idealised=False,use_theta=False):
     """
     take derivative with respect to a given parameter.
     """
     left,right=delta
-    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta)
+    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta,use_theta=use_theta)
     high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
 
@@ -479,12 +500,12 @@ def derivative_lensing(ells,mean_z,width,defaultCosmology,parameter,delta,nz=100
     derivative=(high.lensing_only(zmin=zlensing)-low.lensing_only(zmin=zlensing))/((right+left))
     return derivative
 
-def derivative_parameter_CIB(ells,mean_z,width,defaultCosmology,parameter,delta,nz=1000,kmax=10,zmin=0,lsst=False):
+def derivative_parameter_CIB(ells,mean_z,width,defaultCosmology,parameter,delta,nz=1000,kmax=10,zmin=0,lsst=False,use_theta=False):
     """
     take derivative with respect to a given parameter.
     """
     left,right=delta
-    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta=delta)
+    cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameter,delta=delta,use_theta=use_theta)
     high=cosmology(nz,kmax,zmin,ells,cosmology_pars[0],pars[0],res[0])
     low=cosmology(nz,kmax,zmin,ells,cosmology_pars[1],pars[1],res[1])
 
@@ -568,7 +589,7 @@ class CMB_Primary():
         self.noise_T[self.ells > self.l_max] = 1e100
         self.noise_P[self.ells > self.l_max] = 1e100
 
-    def compute_fisher_from_camb(self,cmbresults,defaultCosmology,parameters,delta):
+    def compute_fisher_from_camb(self,cmbresults,defaultCosmology,parameters,delta,use_theta=False):
         """
            cmbresults: camb object containing initial cosmology information
            defaultCosmology: dictionary containing original cosmology parameters and values
@@ -586,7 +607,7 @@ class CMB_Primary():
         #create the cosmologies to take derivatives with
         for i in range(len(parameters)):
             left,right=delta[i]
-            cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameters[i],delta[i])
+            cosmology_pars,pars,res=get_cosmology_var(defaultCosmology,parameters[i],delta[i],use_theta=use_theta)
             cls_high=res[0].get_cmb_power_spectra(lmax=self.l_max,spectra=['lensed_scalar'],CMB_unit='muK',raw_cl=True)['lensed_scalar'].transpose()
             cls_low=res[1].get_cmb_power_spectra(lmax=self.l_max,spectra=['lensed_scalar'],CMB_unit='muK',raw_cl=True)['lensed_scalar'].transpose()
 
@@ -683,9 +704,9 @@ class BAO_Experiment():
         self.redshifts = np.array(redshifts)
         self.errors = np.array(errors)
     
-    def compute_fisher_from_camb(self,pars,fiducial,parameters,delta):
+    def compute_fisher_from_camb(self,pars,fiducial,parameters,delta,use_theta=False):
         """
-           camb oject
+           pars:camb object
            cosmology: camb object containing initial cosmology information
            fiducial: dictionary containing original cosmology parameters and values
            parameters: list of strings containing name of experiments
@@ -701,7 +722,7 @@ class BAO_Experiment():
         #create the cosmologies to take derivatives with
         for i in range(len(parameters)):
             left,right=delta[i]
-            cosmology_pars,pars,res=get_cosmology_var(fiducial,parameters[i],delta[i])
+            cosmology_pars,pars,res=get_cosmology_var(fiducial,parameters[i],delta[i],use_theta=use_theta)
             matrix_high=res[0].get_BAO(self.redshifts, pars[0])
             matrix_low=res[1].get_BAO(self.redshifts, pars[1])
             rs_over_DVhigh=matrix_high[:, 0]
@@ -724,6 +745,55 @@ class BAO_Experiment():
             self.fisher[j, i] = fisher_ij
 
         return self.fisher
+    
+    def compute_fisher_bias(self,pars1,pars2,fiducial1,parameters,delta,use_theta=False):
+        """compute fisher bias due to wrong cosmology in BAO
+
+        Args:
+            pars1 (object): CAMB object containing parameters of assumed cosmology
+            pars2 (object): CAMB object containing parameters of true cosmology
+            fiducial1 (dictionary): dictionary containing original cosmology parameters and values.
+            parameters (list): list of strings containing name of experiments
+            delta (list): perturbation used in the parameter
+            use_theta (bool, optional): [description]. Defaults to False.
+
+        Returns:
+            array: Bias in the inferred cosmological parameters
+        """
+        der_dict={}
+    
+        #convert the %error into absolute error from fiducial f_k measurements
+        results1 = camb.get_results(pars1)
+        matrix1 = results1.get_BAO(self.redshifts, pars1)
+        rs_over_DV1, H1, DA1, F_AP1 = matrix1[:, 0], matrix1[:, 1], matrix1[:, 2], matrix1[:, 3]
+    
+        results2 = camb.get_results(pars2)
+        matrix2 = results2.get_BAO(self.redshifts, pars2)
+        rs_over_DV2, H2, DA2, F_AP2 = matrix2[:, 0], matrix2[:, 1], matrix2[:, 2], matrix2[:, 3]
+
+        self.errors=rs_over_DV1*self.errors/100
+
+        delta_fk=rs_over_DV1-rs_over_DV2
+
+        der_list=[]
+        for i in range(len(parameters)):
+            left,right=delta[i]
+            cosmology_pars,pars,res=get_cosmology_var(fiducial1,parameters[i],delta[i],use_theta=use_theta)
+            matrix_high=res[0].get_BAO(self.redshifts, pars[0])
+            matrix_low=res[1].get_BAO(self.redshifts, pars[1])
+            rs_over_DVhigh=matrix_high[:, 0]
+            rs_over_DVlow=matrix_low[:, 0]
+            der=(rs_over_DVhigh-rs_over_DVlow)/(left+right)  
+            der_list.append(der)    
+        der_list=np.array(der_list)
+        npar = len(parameters)
+        self.fisher = np.zeros((npar, npar))
+
+        deviation=np.sum(der_list*delta_fk/self.errors**2,axis=1)     
+        
+        return deviation
+
+
 
 class Prior():
     def __init__(self,parameter_name,error):
@@ -807,14 +877,25 @@ def get_BAO15():
 
 def get_DESI_lowz():
     zs_low=np.array([0.05, 0.15, 0.25, 0.35, 0.45])
-    sigma_fk_errorlow=np.array([4.33,1.66,1.07,0.91,1.56])
+    sigma_fk_errorlow=np.array([5.73708792, 2.2061933 , 1.41190573, 1.19829509, 2.01286142])
     lowz=BAO_Experiment(zs_low,sigma_fk_errorlow)
     return lowz
 
 def get_DESI_highz():
     zs_high = np.array([0.65, 0.75, 0.85, 0.95, 1.05, 1.15, 1.25, 1.35, 1.45, 1.55, 1.65, 1.75, 1.85]) 
-    sigma_fk_errorhigh=np.array([0.57,0.48,0.47,0.49,0.58,0.60,0.61,0.92,0.98,1.16,1.76,2.88,2.92])
+    sigma_fk_errorhigh=np.array([0.74084036, 0.69141562, 0.68133855, 0.68133855, 0.71231235,
+       0.71660465, 0.71660465, 0.86730746, 0.89607167, 1.00221976,
+       1.37959736, 2.1699872 , 2.19903262])
     highz=BAO_Experiment(zs_high,sigma_fk_errorhigh)
+    return highz
+
+def get_DESI_ly():
+    zs=np.array([1.96,2.12,2.28,2.43,2.59,2.75,2.91,3.07,3.23,3.39,3.55])
+
+    sigma_fk=np.array([2.03487646, 1.47734371, 1.58327368, 1.71535549, 1.90272319,
+       2.16102856, 2.54238951, 3.03212613, 3.85788658, 5.40242744,
+       7.95303227])
+    highz=BAO_Experiment(zs,sigma_fk)
     return highz
 
 
@@ -884,7 +965,7 @@ class CMB_Lensing():
         self.noise_rec[np.arange(self.l_max+1) >= lens_kmax] = 1e100
 
  
-    def compute_fisher_from_camb(self,cmbresults,defaultCosmology,parameters,delta):
+    def compute_fisher_from_camb(self,cmbresults,defaultCosmology,parameters,delta,use_theta=False):
         """
            cosmology: camb object containing initial cosmology information
            fiducial: dictionary containing original cosmology parameters and values
@@ -910,13 +991,13 @@ class CMB_Lensing():
             # following eq 4 of https://arxiv.org/pdf/1402.4108.pdf
             left_i,right_i=delta[i]
             left_j,right_j=delta[j]
-            _,pars_i,res_i=get_cosmology_var(defaultCosmology,parameters[i],delta[i])
+            _,pars_i,res_i=get_cosmology_var(defaultCosmology,parameters[i],delta[i],use_theta=use_theta)
             cls_high_i=res_i[0].get_lens_potential_cls(lmax=self.k_max)
             cls_high_i=cls_high_i[:,0]*np.pi*0.5
             cls_low_i=res_i[1].get_lens_potential_cls(lmax=self.k_max)
             cls_low_i=cls_low_i[:,0]*np.pi*0.5
             df[parameters[i]+'_kk']=(cls_high_i-cls_low_i)/((right_i+left_i))
-            _,pars_j,res_j=get_cosmology_var(defaultCosmology,parameters[j],delta[j])
+            _,pars_j,res_j=get_cosmology_var(defaultCosmology,parameters[j],delta[j],use_theta=use_theta)
             cls_high_j=res_j[0].get_lens_potential_cls(lmax=self.k_max)
             cls_high_j=cls_high_j[:,0]*np.pi*0.5
             cls_low_j=res_j[1].get_lens_potential_cls(lmax=self.k_max)
