@@ -5,9 +5,21 @@ from astropy import units as u
 from astropy.cosmology import Planck15
 from camb import model, initialpower
 from scipy.special import erf
+from orphics import maps,cosmology as cc,io,stats
+import os
+import sys
+import warnings
 
-#finite difference
-#insert the parameter you would like to vary
+
+
+
+
+def bandedcls(cl,_bin_edges):
+    ls=np.arange(cl.size)
+    binner = stats.bin1D(_bin_edges)
+    cents,bls = binner.bin(ls,cl)
+    return cents,bls
+
 def get_cosmology_var(defaultCosmology,par,delta,use_theta=False):
     """
     default cosmology: dict containing default cosmology values
@@ -56,9 +68,10 @@ class cosmology:
         self.chistar=self.results.conformal_time(0)- self.results.tau_maxvis
         self.chis=np.linspace(0,self.chistar,self.nz)
         self.zs=self.results.redshift_at_comoving_radial_distance(self.chis)
+        self.zs = self.zs[1:-1]
         self.dchis=(self.chis[2:]-self.chis[:-2])/2
         self.chis=self.chis[1:-1]
-        self.zs = self.zs[1:-1]
+        
         self.Hzs = np.array([self.results.hubble_parameter(z) for z in self.zs])
         self.pars.Transfer.accurate_massive_neutrinos = True  
         self.bias=cosmology['bias']
@@ -69,8 +82,7 @@ class cosmology:
 hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
 
         #LSST specification
-
-        self.LSST_bins=np.array([0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.3, 2.6, 3, 3.5, 4, 7])
+        self.LSST_bins=np.array([0,1,1.2,1.4,1.6,1.8,2,2.3,2.6,3,3.5,4,4.5,4.6,5])
         self.lsst_bias=np.array([cosmology[f'lsst_bias{i}'] for i in range(len(self.LSST_bins)-1)])
         self.bincenters=self.LSST_bins[:-1]+np.diff(self.LSST_bins)/2
         start=self.LSST_bins[:-1]
@@ -80,7 +92,6 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
             self.LSST_z.append(np.arange(start[i],end[i],0.001)) 
 
         
-
     def get_lensing_window(self,zmin=0):
         cSpeedKmPerSec = 299792.458
         lensingwindow = 1.5*(self.cosmology['omch2']+self.cosmology['ombh2']+self.pars.omnuh2)*100.*100.*(1.+self.zs)*self.chis*((self.chistar - self.chis)/self.chistar)/self.Hzs/cSpeedKmPerSec
@@ -90,9 +101,15 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
 
         return lensingwindow
         
-
     def dn_dz_LSST(self,z,z0=0.3):
         return (1/(2*z0))*(z/z0)**2*np.exp(-z/z0)
+
+    """
+    def dn_dz_LSST(self,z,z0=0.3):
+        y=(1/(2*z0))*(z/z0)**2*np.exp(-z/z0)
+        y[z>2]=-0.025*z[z>2]+0.15
+        return y
+    """ 
 
     def lsst_window(self,i,B=1):
         zrange=self.zs
@@ -101,6 +118,30 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
         err_0=erf((zrange-self.LSST_bins[i])/(np.sqrt(2)*sigma_z))
         err_1=erf((zrange-self.LSST_bins[i+1])/(np.sqrt(2)*sigma_z))
         dn_idz=40*self.dn_dz_LSST(zrange)*0.5*(err_0-err_1)
+        window=bias*dn_idz/np.trapz(dn_idz,zrange)
+        return window
+     
+    """
+    def lsst_window(self,i,B=1):
+        total=np.array([1.79114093e-03, 2.01871328e-02, 8.11250816e-02, 1.90752497e-01,
+       3.16478266e-01, 5.03007186e-01, 7.06423980e-01, 8.11210539e-01,
+       8.57749611e-01, 8.95622652e-01, 8.79930820e-01, 7.86942607e-01,
+       7.04348496e-01, 5.72767689e-01, 4.10724103e-01, 3.09921888e-01,
+       2.53755120e-01, 1.85140750e-01, 1.18735811e-01, 6.60753349e-02,
+       3.15645891e-02, 1.28382887e-02, 5.41259373e-03, 2.74372685e-03,
+       9.70482597e-04, 6.11316500e-06])
+        zrange=self.zs
+        self.lc.addStepNz(f"g{i}",self.LSST_bins[i],self.LSST_bins[i+1],bias=1,ignore_exists=True)
+        window=self.lc.kernels[f"g{i}"]['W']
+        return window
+    """ 
+     
+
+    def get_futuristic_window(self,i,B=1):
+        zrange=self.zs
+        sigma_z=0.05*(1+zrange)
+        bias=B*(1+zrange)
+        dn_idz=60*self.dn_dz_LSST(zrange)
         window=bias*dn_idz/np.trapz(dn_idz,zrange)
         return window
 
@@ -158,7 +199,6 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
                 wg[:]=1
                 wg[k<1e-4]=0
                 wg[k>=self.kmax]=0
-                #wg[k>=k_cut]=1e30
                 pkin = self.PK.P(self.zs, k, grid=False)
                 common = ((wg*pkin)*precalcFactor)[self.zs>=self.zmin]        
                 estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(galaxywindow*galaxywindow2)[self.zs>=self.zmin])
@@ -248,7 +288,6 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
 
     def get_clgg(self,galaxy_window,lmax=3000):
         cSpeedKmPerSec = 299792.458
-        #galaxywindow=self.dndz_gauss(self.zs,mean_z,width)
         galaxywindow=galaxy_window
         cl_autog=[]
         ellsgg=np.arange(lmax)
@@ -303,6 +342,39 @@ hubble_units=False, k_hunit=False, kmax=self.kmax, zmax=self.zs[-1])
             estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(lensingwindow*galaxywindow)[self.zs>=self.zmin])
             cl_cross.append(estCl)
         return np.array(cl_cross)
+
+    def get_kappa_g_forecast(self,galaxy_window,shot_noise,N0,f_sky,bin_edges,lmax=3000):
+        cSpeedKmPerSec = 299792.458
+        lensingwindow=self.get_lensing_window()
+        galaxywindow=galaxy_window
+        precalcFactor= self.Hzs**2./self.chis/self.chis/cSpeedKmPerSec**2.
+        ellsgg=np.arange(lmax)
+        cl_cross=[]
+        w = np.ones(self.chis.shape)
+        for l in ellsgg:
+            k=(l+0.5)/self.chis
+            w[:]=1
+            w[k<1e-4]=0
+            w[k>=self.kmax]=0
+            pkin = self.PK.P(self.zs, k, grid=False)
+            common = ((w*pkin)*precalcFactor)[self.zs>=self.zmin]        
+            estCl = np.dot(self.dchis[self.zs>=self.zmin], common*(lensingwindow*galaxywindow)[self.zs>=self.zmin])
+            cl_cross.append(estCl)
+        clkg=np.array(cl_cross)
+        clgg=self.get_clgg(galaxy_window,lmax=lmax)
+        clkk=self.get_clkk(lmax=3000,lens_kmax=lmax,zmin=0)
+        auto_error=clkk+N0
+        gal_error=clgg+shot_noise
+        error=auto_error*gal_error+clkg**2
+        cents,errorb=bandedcls(error,bin_edges)
+        cents,clkgb=bandedcls(clkg,bin_edges)
+        cov=np.ones(len(errorb))
+
+        for i in range(len(errorb)):
+            cov[i]=(1/((2*cents[i]+1)*np.diff(bin_edges)[i]*f_sky))*(errorb[i])
+        snr=round(np.sqrt(np.sum(clkgb**2/cov)),2)
+
+        return cents,clkgb,np.sqrt(cov),snr
 
     def get_clcibk(self,cib_window,lmax=3000):
         cSpeedKmPerSec = 299792.458
@@ -718,7 +790,7 @@ class BAO_Experiment():
         matrix = results.get_BAO(self.redshifts, pars)
         rs_over_DV, H, DA, F_AP = matrix[:, 0], matrix[:, 1], matrix[:, 2], matrix[:, 3]
 
-        self.errors=rs_over_DV*self.errors/100
+        errors=rs_over_DV*self.errors/100
         #create the cosmologies to take derivatives with
         for i in range(len(parameters)):
             left,right=delta[i]
@@ -738,7 +810,7 @@ class BAO_Experiment():
             for z_ind, z in enumerate(self.redshifts):
                 df_dtheta_i = df[parameters[i]+'_dfdtheta'][z_ind]
                 df_dtheta_j = df[parameters[j]+'_dfdtheta'][z_ind]
-                fisher_ij += np.sum( (df_dtheta_i*df_dtheta_j)/(self.errors[z_ind]**2) )
+                fisher_ij += np.sum( (df_dtheta_i*df_dtheta_j)/(errors[z_ind]**2) )
 
             # fisher is diagonal, so we get half of the matrix for free
             self.fisher[i, j] = fisher_ij
@@ -771,7 +843,7 @@ class BAO_Experiment():
         matrix2 = results2.get_BAO(self.redshifts, pars2)
         rs_over_DV2, H2, DA2, F_AP2 = matrix2[:, 0], matrix2[:, 1], matrix2[:, 2], matrix2[:, 3]
 
-        self.errors=rs_over_DV1*self.errors/100
+        errors=rs_over_DV2*self.errors/100
 
         delta_fk=rs_over_DV1-rs_over_DV2
 
@@ -789,7 +861,9 @@ class BAO_Experiment():
         npar = len(parameters)
         self.fisher = np.zeros((npar, npar))
 
-        deviation=np.sum(der_list*delta_fk/self.errors**2,axis=1)     
+        deviation=np.sum(der_list*delta_fk/errors**2,axis=1)  
+        print('deviation')  
+        print(deviation) 
         
         return deviation
 
@@ -891,13 +965,58 @@ def get_DESI_highz():
 
 def get_DESI_ly():
     zs=np.array([1.96,2.12,2.28,2.43,2.59,2.75,2.91,3.07,3.23,3.39,3.55])
-
     sigma_fk=np.array([2.03487646, 1.47734371, 1.58327368, 1.71535549, 1.90272319,
        2.16102856, 2.54238951, 3.03212613, 3.85788658, 5.40242744,
-       7.95303227])
+       7.95303227])/5
+
     highz=BAO_Experiment(zs,sigma_fk)
+         
+
     return highz
 
+def get_DESI_lyt(z):
+    zs=np.array([10,20,30,40,100,120,1000])
+    sigma_fk=np.ones(len(zs))/5
+
+    #highz=BAO_Experiment(zs,sigma_fk)
+    zs_new=zs[zs>z]
+    sigma_fknew=sigma_fk[zs>z]
+    highz=BAO_Experiment(zs_new,sigma_fknew)
+
+    return highz
+
+def get_DESI_mapper(z):
+    zs=np.array([2,2.5,3,3.5,4,4.5,5,10])
+    sigma_fk=np.array([0.29592628, 0.3, 0.30087706, 0.30754157, 0.31548447,
+       0.32420448, 0.33340725,1000000000000])
+
+    zs_new=zs[zs>z]
+    sigma_fknew=sigma_fk[zs>z]
+    print(zs_new)
+    print(sigma_fknew)
+    highz=BAO_Experiment(zs_new,sigma_fknew)
+        
+    return highz
+
+def get_theory_dicts(nells=None,lmax=9000,grad=True):
+    from orphics import cosmology as co
+    
+    thloc = os.path.dirname(os.path.abspath(__file__)) + "/../data/" + 'cosmo2017_10K_acc3'
+    ls = np.arange(lmax+1)
+    ucls = {}
+    tcls = {}
+    theory = cc.loadTheorySpectraFromCAMB(thloc,get_dimensionless=False)
+    ells,gt,ge,gb,gte = np.loadtxt(f"{thloc}_camb_1.0.12_grads.dat",unpack=True,usecols=[0,1,2,3,4])
+    if nells is None: nells = {'TT':0,'EE':0,'BB':0}
+    ucls['TT'] = maps.interp(ells,gt)(ls) if grad else theory.lCl('TT',ls)
+    ucls['TE'] = maps.interp(ells,gte)(ls) if grad else theory.lCl('TE',ls)
+    ucls['EE'] = maps.interp(ells,ge)(ls) if grad else theory.lCl('EE',ls)
+    ucls['BB'] = maps.interp(ells,gb)(ls) if grad else theory.lCl('BB',ls)
+    tcls['TT'] = theory.lCl('TT',ls) + nells['TT']
+    tcls['TE'] = theory.lCl('TE',ls)
+    tcls['EE'] = theory.lCl('EE',ls) + nells['EE']
+    tcls['BB'] = theory.lCl('BB',ls) + nells['BB']
+    return ucls, tcls
 
 class CMB_Lensing():
     """Produce lensing kappa noise from pytempura. Useful to combine with CMB primary fisher forecast
@@ -908,7 +1027,7 @@ class CMB_Lensing():
              lens_beam = 7.0,lens_noiseT = 33.,lens_noiseP = 56.,
              lens_tellmin = 2,lens_tellmax = 3000,lens_pellmin = 2,
              lens_pellmax = 3000,lens_kmin = 80,lens_kmax = 3000, lens_f_sky=0.65, estimators=('TT','TE','EE','EB','TB','MV'), 
-                NlTT=None, NlEE=None, NlBB=None):
+                NlTT=None, NlEE=None, NlBB=None,bin_edges=None):
 
         # get lensing noise
         # Initialize cosmology and Clkk. Later parts need dimensionless spectra.
@@ -918,7 +1037,6 @@ class CMB_Lensing():
         self.k_max = lens_kmax
         self.f_sky = lens_f_sky
         
-        from falafel import utils
         import pytempura
         # generate cosmology with orphics
         lmax = self.l_max
@@ -957,14 +1075,31 @@ class CMB_Lensing():
 
         est_norm_list=['TT','TE','EE','EB','TB','MV']
 
-        ucls,tcls = utils.get_theory_dicts(nells=noise,lmax=lmax,grad=True)
+        ucls,tcls = get_theory_dicts(nells=noise,lmax=lmax,grad=True)
         Als = pytempura.get_norms(est_norm_list,ucls,tcls,self.l_min,lmax,k_ellmax=lens_kmax)
         ls = np.arange(Als['MV'][0].size)
         self.noise_rec = np.interp(np.arange(self.l_max+1), ls, Als['MV'][0]* (ls*(ls+1.)/2.)**2.)
         self.noise_rec[np.arange(self.l_max+1) <= lens_kmin] = 1e100
         self.noise_rec[np.arange(self.l_max+1) >= lens_kmax] = 1e100
-
  
+
+    def get_auto_spectra(self,cmbresults,bin_edges):
+        """return binned clkk and snr"""
+        results=cmbresults
+        clkk=results.get_lens_potential_cls(lmax=self.k_max) #camb returns Dphi
+        clkk=clkk[:,0]*np.pi*0.5
+        
+        error=clkk+self.noise_rec[:self.k_max+1]
+        cents,errorb=bandedcls(error,bin_edges)
+        cents,clkkb=bandedcls(clkk,bin_edges)
+        cov=np.ones(len(errorb))
+        for i in range(len(errorb)):
+            cov[i]=(1/(cents[i]*np.diff(bin_edges)[i]*self.f_sky))*(errorb[i])**2
+        snr=round(np.sqrt(np.sum(clkkb**2/cov)),2)
+        return cents,clkkb,np.sqrt(cov),snr
+
+
+
     def compute_fisher_from_camb(self,cmbresults,defaultCosmology,parameters,delta,use_theta=False):
         """
            cosmology: camb object containing initial cosmology information
@@ -988,7 +1123,6 @@ class CMB_Lensing():
         for i,j in itertools.combinations_with_replacement( range(npar),r=2):
             fisher_ij = 0.0
             print(i)
-            # following eq 4 of https://arxiv.org/pdf/1402.4108.pdf
             left_i,right_i=delta[i]
             left_j,right_j=delta[j]
             _,pars_i,res_i=get_cosmology_var(defaultCosmology,parameters[i],delta[i],use_theta=use_theta)
